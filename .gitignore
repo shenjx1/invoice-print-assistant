@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec.bak
+
+# 开发自测产物（截图、示例 PDF、临时日志）
+build_test/
+
+# 打包出来的压缩包
+*.zip
+*.7z
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地临时工具（不随仓库发布）
+tools_bin/
+gh_login.log
+
+# 临时：workflow 文件（令牌缺 workflow 权限时先不推）
+_local_ci/

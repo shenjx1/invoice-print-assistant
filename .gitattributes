@@ -1,0 +1,12 @@
+# 统一换行，避免 Windows / macOS 来回改整个文件
+* text=auto
+
+# 这两个是 GBK 编码给 cmd 用的，别让 git 动它的字节
+*.bat -text
+package/使用说明.txt -text
+
+# 二进制资源
+*.ico -text
+*.png -text
+*.pdf -text
+*.zip -text

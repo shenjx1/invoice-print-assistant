@@ -1,0 +1,52 @@
+name: build-windows
+
+# 打 tag（v1.0.0 之类）自动出 Release；也可以在 Actions 页面手动跑
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: 生成打印机图标
+        run: python tools/make_icon.py
+
+      - name: 打包（文件夹版）
+        run: python -m PyInstaller --noconfirm --clean build_onedir.spec
+
+      - name: 打成 zip
+        env:
+          ONEDIR_DIST: ${{ github.workspace }}/dist
+        run: python tools/make_package_onedir.py
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: invoice-print-assistant-windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          generate_release_notes: true

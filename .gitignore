@@ -29,5 +29,4 @@ desktop.ini
 tools_bin/
 gh_login.log
 
-# 临时：workflow 文件（令牌缺 workflow 权限时先不推）
-_local_ci/
+gh_refresh.log

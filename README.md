@@ -23,7 +23,7 @@
 
 ## 下载使用
 
-到 Releases 页面下载 `发票打印助手.zip`：
+到 [Releases](https://github.com/shenjx1/invoice-print-assistant/releases) 页面下载 `invoice-print-assistant-v1.0.0.zip`（45 MB，解压后 105 MB）：
 
 1. 完整解压（别在压缩包里直接双击）
 2. 双击 `安装到本机.bat` —— 复制到 `D:\发票打印助手\`，建桌面快捷方式，登记右键菜单
@@ -51,14 +51,17 @@ build.bat            # 装依赖 → 生成图标 → PyInstaller 文件夹版
 
 产物在 `dist\发票打印助手\`。再跑 `python tools\make_package_onedir.py` 打成可直接发给别人的 zip。
 
-打 tag 推上去也会自动出 Release：
+打 tag 推上去也能自动出 Release：
 
 ```bash
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-`.github/workflows/build.yml` 会在 Windows runner 上构建并把 zip 挂到 Release。
+自动构建脚本在 [`docs/ci/build.yml`](docs/ci/build.yml)：在 Windows runner 上装依赖、生成图标、打包、把 zip 挂到 Release。
+它没有放在 `.github/workflows/` 里，是因为创建仓库时用的令牌不含 `workflow` 权限（GitHub 会拒绝推送这个目录）。
+
+想启用：在网页上打开 `docs/ci/build.yml` → 复制全部内容 → **Actions** 标签页 → *New workflow* → 粘贴、命名 `build.yml` 提交即可。
 
 ## 改名字 / 换图标
 

@@ -1,7 +1,15 @@
-# 发票打印助手
+# 发票打印助手 · Invoice Print Assistant
 
 > 把一批 PDF 发票拖进来，每个文件独立成一张发票、独立送打印，按 A4「每张纸上下两张」拼版。
 > Windows 桌面程序，PySide6 + PyMuPDF，**不联网、不收集任何数据**。
+
+**English** — A Windows desktop tool that batch-prints PDF invoices: drag in a folder of
+invoice PDFs, it imposes two pages per A4 sheet (1×2, portrait) and sends each invoice to the
+printer as its own job. Extracts 物料名称 / 规格型号 / 数量 / 单价 / 发票号 from the PDF text
+layer into a searchable history with CSV export. Built with PySide6 + PyMuPDF. Fully offline.
+
+*Keywords: pdf invoice printer, batch print pdf, invoice imposition, n-up printing, 2-up A4,
+Chinese invoice (增值税发票 / 电子发票) printing, fapiao, PySide6 desktop app, Windows.*
 
 ![主界面](docs/screenshots/main.png)
 

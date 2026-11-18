@@ -180,6 +180,8 @@ class Settings:
     landscape: bool = False
     render_dpi: int = 300
     copies: int = 1
+    print_engine: str = "auto"  # auto=自动 / sumatrapdf=矢量 / raster=位图，见 app.printers
+    gray: bool = True          # 8 位灰度送印：黑白激光机省 3/4 数据量，彩色机可关掉
     auto_print: bool = True    # 拖入后立即打印（逐文件独立提交）
     only_invoice: bool = True  # 只打印发票：合同/报价单等非发票 PDF 跳过，不出纸
     pad_mode: str = "repeat"   # 空位处理：repeat=用本发票补齐联次  blank=留白
@@ -238,6 +240,9 @@ class Settings:
         pad_mode = text(raw.get("pad_mode"), defaults.pad_mode)
         if pad_mode not in ("repeat", "blank"):
             pad_mode = defaults.pad_mode
+        print_engine = text(raw.get("print_engine"), defaults.print_engine)
+        if print_engine not in ("auto", "sumatrapdf", "raster"):
+            print_engine = defaults.print_engine
 
         cols = integer(spec_raw.get("cols"), spec_defaults.cols, 1, 4)
         rows = integer(spec_raw.get("rows"), spec_defaults.rows, 1, 4)
@@ -254,6 +259,8 @@ class Settings:
                 landscape=boolean(raw.get("landscape"), defaults.landscape),
                 render_dpi=integer(raw.get("render_dpi"), defaults.render_dpi, 150, 600),
                 copies=integer(raw.get("copies"), defaults.copies, 1, 99),
+                print_engine=print_engine,
+                gray=boolean(raw.get("gray"), defaults.gray),
                 auto_print=boolean(raw.get("auto_print"), defaults.auto_print),
                 only_invoice=boolean(raw.get("only_invoice"), defaults.only_invoice),
                 pad_mode=pad_mode,

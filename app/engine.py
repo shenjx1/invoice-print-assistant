@@ -181,13 +181,22 @@ def scan_pdf(path: str) -> List[PageRef]:
     return refs
 
 
-def render_page(path: str, index: int, dpi: float = 300, rotate: int = 0) -> Image.Image:
-    """把某一页渲染成 PIL 图像（按 dpi 输出自然尺寸）。"""
+def render_page(path: str, index: int, dpi: float = 300, rotate: int = 0,
+                gray: bool = False) -> Image.Image:
+    """把某一页渲染成 PIL 图像（按 dpi 输出自然尺寸）。
+
+    ``gray=True`` 输出 8 位灰度：黑白激光打印机本来就要把彩色转灰度，
+    先渲染彩色只是白白多花 3 倍内存和 CPU。
+    """
     with fitz.open(path) as doc:
         page = doc[index]
         zoom = dpi / PT_PER_INCH
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        colorspace = fitz.csGRAY if gray else fitz.csRGB
+        pix = page.get_pixmap(
+            matrix=fitz.Matrix(zoom, zoom), colorspace=colorspace, alpha=False
+        )
+        mode = "L" if gray else "RGB"
+        img = Image.frombytes(mode, (pix.width, pix.height), pix.samples)
     if rotate:
         img = img.rotate(-rotate, expand=True)
     return img
@@ -311,17 +320,99 @@ def print_sheets(
     job_name: str = "发票打印",
     on_page=None,
     output_file: Optional[str] = None,
+    engine: str = "auto",
+    gray: bool = True,
 ) -> int:
-    """把拼好的版面直接送到打印机。返回实际输出的纸张数。
+    """把拼好的版面送到打印机。返回实际输出的纸张数。
 
-    sheets: 每一项是一张纸，内部是按版式顺序排列的 PageRef（None 表示留空）。
-    output_file: 仅调试用（例如输出到 Microsoft Print to PDF 的指定文件）。
+    ``sheets`` 每一项是一张纸，内部是按版式顺序排列的 PageRef（None 表示留空）。
+
+    ``engine`` 决定走哪条路线：
+
+    * ``auto``（默认）—— 探测到 SumatraPDF 就走矢量，否则退回 GDI 位图
+    * ``sumatrapdf`` —— 强制矢量；找不到引擎直接报错，不静默降级
+    * ``raster`` —— 强制位图兼容模式
+
+    矢量路线的收益在体积：同一张 A4，位图要往打印队列送约 26MB，
+    矢量 PDF 只有几十 KB，红章和 1pt 细线也不会在重采样里被磨掉。
+
+    ``gray`` 只对位图路线生效：按 8 位灰度渲染并送印，黑白激光打印机
+    能把队列数据压到 1/4，彩色激光机可以关掉。
+
+    ``output_file`` 是位图路线的调试出口（例如打到 Microsoft Print to PDF），
+    指定时强制走位图，保持原有语义。
     """
     if not printer:
         raise RuntimeError("未找到可用的打印机")
     if not sheets:
         return 0
 
+    if output_file is None:
+        from . import printers  # 延迟导入：printers → pdfout → engine 会绕回来
+
+        if printers.resolve_engine(engine) == printers.ENGINE_VECTOR:
+            return _print_vector(
+                printer, sheets, spec, paper, landscape, copies, job_name, on_page
+            )
+
+    return _print_raster(
+        printer, sheets, spec, paper, landscape, copies, render_dpi, job_name,
+        on_page, output_file, gray,
+    )
+
+
+def _print_vector(
+    printer: str,
+    sheets: Sequence[Sequence[Optional[PageRef]]],
+    spec: LayoutSpec,
+    paper: str,
+    landscape: bool,
+    copies: int,
+    job_name: str,
+    on_page=None,
+) -> int:
+    """矢量路线：合成 A4 拼版 PDF → 交给 SumatraPDF 静默打印 → 删临时文件。"""
+    import tempfile
+
+    from . import pdfout, printers
+
+    fd, tmp_path = tempfile.mkstemp(prefix="fapiao_", suffix=".pdf")
+    os.close(fd)
+    try:
+        pdfout.compose_to_file(
+            sheets, spec, tmp_path, paper, landscape, title=job_name
+        )
+        printers.print_pdf(tmp_path, printer, copies=copies, job_name=job_name)
+        printed = len(sheets) * max(1, int(copies))
+        log.info("矢量打印完成：%s → %s，%d 张纸", job_name, printer, printed)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    if on_page:
+        try:
+            on_page(printed)
+        except Exception:  # 进度回调出错不能影响已经完成的打印
+            log.warning("打印进度回调失败", exc_info=True)
+    return printed
+
+
+def _print_raster(
+    printer: str,
+    sheets: Sequence[Sequence[Optional[PageRef]]],
+    spec: LayoutSpec,
+    paper: str = "A4",
+    landscape: bool = False,
+    copies: int = 1,
+    render_dpi: int = 300,
+    job_name: str = "发票打印",
+    on_page=None,
+    output_file: Optional[str] = None,
+    gray: bool = True,
+) -> int:
+    """位图路线：逐页渲染成位图贴到打印机 DC。零依赖，兼容性最好。"""
     from . import gdi
 
     copies = max(1, int(copies))
@@ -344,7 +435,7 @@ def print_sheets(
                     gdi.start_page(hdc)
                     for cell, ref in zip(cells, sheet):
                         if ref is not None:
-                            _draw_page(hdc, ref, cell, spec, dpi_x, dpi_y, render_dpi, gdi)
+                            _draw_page(hdc, ref, cell, spec, dpi_x, dpi_y, render_dpi, gdi, gray)
                     gdi.end_page(hdc)
                     printed += 1
                 if on_page:
@@ -358,16 +449,36 @@ def print_sheets(
     return printed
 
 
+def effective_render_dpi(render_dpi, device_dpi) -> int:
+    """算出这一页实际使用的渲染 DPI。
+
+    规则：以用户设置为准，但不超过设备分辨率（再高只是插值放大，
+    白烧内存和 CPU，纸上不会有任何增益），并限制在 150～600 之间。
+    设备 600dpi 时把设置改成 300，渲染就真的是 300。
+    """
+    device = int(device_dpi) if device_dpi and device_dpi > 0 else 600
+    return max(150, min(int(render_dpi or 300), device, 600))
+
+
 def _draw_page(hdc, ref: PageRef, cell: Rect, spec: LayoutSpec,
-               dpi_x: float, dpi_y: float, render_dpi: int, gdi) -> None:
+               dpi_x: float, dpi_y: float, render_dpi: int, gdi,
+               gray: bool = False) -> None:
     page_w = ref.size_pt[0] / PT_PER_INCH * dpi_x
     page_h = ref.size_pt[1] / PT_PER_INCH * dpi_y
     rect, rot = fit_page(page_w, page_h, cell, spec.scale_pct / 100.0, spec.auto_rotate)
 
     target = (max(1, int(round(rect.w))), max(1, int(round(rect.h))))
-    # 渲染分辨率取「设置值」与「设备分辨率」的较大者（上限 600dpi），保证文字锐利
-    dpi = max(int(render_dpi), min(int(dpi_x), 600))
-    img = render_page(ref.path, ref.index, dpi=dpi, rotate=rot)
+    dpi = effective_render_dpi(render_dpi, dpi_x)
+    img = render_page(ref.path, ref.index, dpi=dpi, rotate=rot, gray=gray)
+    # 一行日志把「设置多少、实际多少、落到设备像素多大」钉死，
+    # 出纸清晰度有争议时不用再猜到底是哪一档生效了。
+    log.info(
+        "渲染 %s 第 %d 页：设置 %ddpi → 实际 %ddpi（设备 %ddpi，%s），源图 %d×%d 像素，贴图 %d×%d",
+        os.path.basename(ref.path), ref.index + 1,
+        int(render_dpi or 300), dpi, int(dpi_x),
+        "灰度" if gray else "彩色",
+        img.width, img.height, target[0], target[1],
+    )
     if img.size != target:
         img = img.resize(target, Image.LANCZOS)
 

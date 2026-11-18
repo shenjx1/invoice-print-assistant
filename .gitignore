@@ -30,3 +30,8 @@ tools_bin/
 gh_login.log
 
 gh_refresh.log
+
+# 安装程序构建产物
+installer/payload.zip
+dist_installer/
+build_installer/

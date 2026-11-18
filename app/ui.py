@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import shellmenu, style
+from . import printers, shellmenu, style
 from .config import CONFIG_FILE, UI_NAME, Settings, app_dir, desktop_dir
 from .engine import LayoutSpec, compose_sheet, list_printers
 from .extract import extract_fields
@@ -681,6 +681,16 @@ class MainWindow(QMainWindow):
         for dpi in (200, 300, 600):
             self.dpi_combo.addItem(f"{dpi} dpi", dpi)
 
+        self.engine_combo = QComboBox()
+        for value, label in printers.ENGINE_LABELS.items():
+            self.engine_combo.addItem(label, value)
+
+        self.gray_check = QCheckBox("灰度送印（黑白激光机更快）")
+        self.gray_check.setToolTip(
+            "按 8 位灰度渲染并送印。黑白激光打印机本来就要把彩色转灰度，\n"
+            "勾上后送进队列的数据少约 3/4，出纸更快；彩色激光机请取消勾选。"
+        )
+
         add_row(0, "每张纸放置", self.layout_combo)
         add_row(1, "页边距", self.margin_spin)
         add_row(2, "缩放比例", self.scale_spin)
@@ -688,7 +698,15 @@ class MainWindow(QMainWindow):
         add_row(4, "方向", self.orient_combo)
         add_row(5, "份数", self.copies_spin)
         add_row(6, "打印清晰度", self.dpi_combo)
+        add_row(7, "打印引擎", self.engine_combo)
+        add_row(8, "送印色彩", self.gray_check)
         lay.addLayout(grid)
+
+        self.engine_hint = QLabel("")
+        self.engine_hint.setObjectName("Hint")
+        self.engine_hint.setWordWrap(True)
+        lay.addWidget(self.engine_hint)
+        self._update_engine_hint()
 
         tip = QLabel("1×2 + 页边距 0.51cm + 缩放 95.5% 即为标准发票拼版参数；\n每个 PDF 独立成版、独立一张打印作业")
         tip.setObjectName("Hint")
@@ -1173,7 +1191,9 @@ class MainWindow(QMainWindow):
             widget.valueChanged.connect(self._on_settings_changed)
         for combo in (self.layout_combo, self.paper_combo, self.orient_combo, self.dpi_combo):
             combo.currentIndexChanged.connect(self._on_settings_changed)
+        self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
         self.auto_print_check.toggled.connect(self._on_settings_changed)
+        self.gray_check.toggled.connect(self._on_settings_changed)
         self.only_invoice_check.toggled.connect(self._on_only_invoice_toggled)
         self.pad_combo.currentIndexChanged.connect(self._on_settings_changed)
         self.shell_check.toggled.connect(self._on_shell_toggled)
@@ -1208,7 +1228,7 @@ class MainWindow(QMainWindow):
         s = self.settings
         spec = s.spec
         widgets = [self.layout_combo, self.paper_combo, self.orient_combo, self.dpi_combo,
-                   self.margin_spin, self.scale_spin, self.copies_spin]
+                   self.engine_combo, self.margin_spin, self.scale_spin, self.copies_spin]
         for w in widgets:
             w.blockSignals(True)
 
@@ -1219,6 +1239,11 @@ class MainWindow(QMainWindow):
         self.orient_combo.setCurrentIndex(1 if s.landscape else 0)
         d = self.dpi_combo.findData(s.render_dpi)
         self.dpi_combo.setCurrentIndex(d if d >= 0 else 1)
+        e = self.engine_combo.findData(s.print_engine)
+        self.engine_combo.setCurrentIndex(e if e >= 0 else 0)
+        self.gray_check.blockSignals(True)
+        self.gray_check.setChecked(s.gray)
+        self.gray_check.blockSignals(False)
         self.margin_spin.setValue(spec.margin_cm)
         self.scale_spin.setValue(spec.scale_pct)
         self.copies_spin.setValue(s.copies)
@@ -1236,6 +1261,7 @@ class MainWindow(QMainWindow):
 
         for w in widgets:
             w.blockSignals(False)
+        self._update_engine_hint()
 
     # ---------------------------------------------------- 资源管理器右键菜单
     def _sync_shell_checkbox(self) -> None:
@@ -1320,6 +1346,8 @@ class MainWindow(QMainWindow):
         self.settings.landscape = bool(self.orient_combo.currentData())
         self.settings.copies = self.copies_spin.value()
         self.settings.render_dpi = self.dpi_combo.currentData()
+        self.settings.print_engine = self.engine_combo.currentData() or printers.ENGINE_AUTO
+        self.settings.gray = self.gray_check.isChecked()
         self.settings.auto_print = self.auto_print_check.isChecked()
         self.settings.only_invoice = self.only_invoice_check.isChecked()
         self.settings.pad_mode = self.pad_combo.currentData() or PAD_REPEAT
@@ -1337,6 +1365,24 @@ class MainWindow(QMainWindow):
         target = self.current_printer()
         suffix = "" if self.settings.printer else "（系统默认）"
         self.status_label.setText(f"当前输出：{target or '未找到打印机'}{suffix}")
+
+    def _update_engine_hint(self) -> None:
+        """把当前引擎的实际可用状态写在下拉框下面，别让用户猜为什么没变快。"""
+        preference = self.engine_combo.currentData() or printers.ENGINE_AUTO
+        self.engine_hint.setText(printers.describe(preference))
+        tip = (
+            "矢量：拼好的版面是 PDF，直接交给 SumatraPDF 静默打印，"
+            "每张纸几 KB，红章与细线保真。\n"
+            "位图：无需任何外部程序，兼容性最好，但每张纸要往打印队列送约 30MB。\n\n"
+            "启用矢量：把 SumatraPDF.exe 放到程序目录即可（约 6MB，便携版无需安装）。"
+        )
+        self.engine_hint.setToolTip(tip)
+        self.engine_combo.setToolTip(tip)
+
+    def _on_engine_changed(self) -> None:
+        self.settings.print_engine = self.engine_combo.currentData() or printers.ENGINE_AUTO
+        self.settings.save()
+        self._update_engine_hint()
         self.status_label.setToolTip(f"配置文件：{CONFIG_FILE}")
 
     # ------------------------------------------------------------------ 打印机
@@ -1709,6 +1755,8 @@ class MainWindow(QMainWindow):
             landscape=self.settings.landscape,
             copies=self.settings.copies,
             render_dpi=self.settings.render_dpi,
+            engine=self.settings.print_engine,
+            gray=self.settings.gray,
             page_count=inv.page_count,
         )
         self.worker.submit(batch)

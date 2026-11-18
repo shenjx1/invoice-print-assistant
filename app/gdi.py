@@ -8,6 +8,8 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 
+from PIL import Image
+
 # 常用设备参数
 HORZRES = 8
 VERTRES = 10
@@ -37,6 +39,41 @@ class BITMAPINFOHEADER(ctypes.Structure):
         ("biClrUsed", wintypes.DWORD),
         ("biClrImportant", wintypes.DWORD),
     ]
+
+
+class RGBQUAD(ctypes.Structure):
+    _fields_ = [
+        ("rgbBlue", ctypes.c_ubyte),
+        ("rgbGreen", ctypes.c_ubyte),
+        ("rgbRed", ctypes.c_ubyte),
+        ("rgbReserved", ctypes.c_ubyte),
+    ]
+
+
+class BITMAPINFO(ctypes.Structure):
+    """8 位灰度必须带 256 色调色板，否则 GDI 会按随机颜色解释像素。"""
+
+    _fields_ = [
+        ("bmiHeader", BITMAPINFOHEADER),
+        ("bmiColors", RGBQUAD * 256),
+    ]
+
+
+def _build_gray_info(width: int, height: int, size: int) -> BITMAPINFO:
+    info = BITMAPINFO()
+    info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    info.bmiHeader.biWidth = width
+    info.bmiHeader.biHeight = -height      # 负值 = 自上而下
+    info.bmiHeader.biPlanes = 1
+    info.bmiHeader.biBitCount = 8
+    info.bmiHeader.biCompression = 0       # BI_RGB
+    info.bmiHeader.biSizeImage = size
+    info.bmiHeader.biClrUsed = 256
+    for i in range(256):
+        info.bmiColors[i].rgbRed = i
+        info.bmiColors[i].rgbGreen = i
+        info.bmiColors[i].rgbBlue = i
+    return info
 
 
 class DOCINFOW(ctypes.Structure):
@@ -132,29 +169,74 @@ def delete_dc(handle) -> None:
 def draw_image(handle, image, x: int, y: int, w: int, h: int) -> None:
     """把 PIL 图像拉伸贴到打印机 DC 的指定矩形（左上角为原点）。
 
-    使用 32 位 BGRA 的 DIB：字节序符合 GDI 要求，且每行天然 4 字节对齐。
+    灰度图（mode="L"）走 8 位 DIB，每像素 1 字节；彩色走 24 位 BGR。
+    黑白激光打印机的发票场景下，8 位能把送进打印队列的数据压到 1/4，
+    而且驱动本来就要把彩色转灰度，彩色渲染纯属白烧 CPU 和内存。
+    两者都要求每行按 4 字节对齐，宽度不足时补零。
     """
     if w <= 0 or h <= 0:
         return
-    img = image.convert("RGBA")
-    data = img.tobytes("raw", "BGRA")
+    if image.mode == "L":
+        data, info, sw, sh = gray_dib(image)
+    else:
+        data, info, sw, sh = color_dib(image)
+    _blit(handle, data, info, sw, sh, x, y, w, h)
+
+
+def gray_dib(image: Image.Image):
+    """灰度 → 8 位 DIB 载荷，返回 (字节, BITMAPINFO, 宽, 高)。
+
+    8 位 DIB 必须带 256 级调色板，否则 GDI 会把像素当随机颜色解释；
+    每行必须 4 字节对齐，宽度不是 4 的倍数时补白列（补白会被拉伸忽略）。
+    """
+    img = image if image.mode == "L" else image.convert("L")
+    stride = (img.width + 3) & ~3
+    if stride != img.width:
+        padded = Image.new("L", (stride, img.height), 255)
+        padded.paste(img, (0, 0))
+        data = padded.tobytes()
+    else:
+        data = img.tobytes()
+    return data, _build_gray_info(img.width, img.height, len(data)), img.width, img.height
+
+
+def color_dib(image: Image.Image):
+    """彩色 → 24 位 BGR DIB 载荷，返回 (字节, BITMAPINFOHEADER, 宽, 高)。
+
+    发票没有透明通道，丢掉 alpha 让送进打印队列的数据少四分之一
+    （一张 A4 @300dpi 约 33MB → 25MB），出纸速度直接受益。
+    每行同样按 4 字节对齐：宽度×3 不是 4 的倍数时补零。
+    """
+    img = image.convert("RGB")
+    width, height = img.size
+    stride = (width * 3 + 3) & ~3
+    data = img.tobytes("raw", "BGR")
+    if stride != width * 3:
+        row = width * 3
+        filler = b"\x00" * (stride - row)
+        data = b"".join(data[i * row:(i + 1) * row] + filler for i in range(height))
 
     header = BITMAPINFOHEADER()
     header.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-    header.biWidth = img.width
-    header.biHeight = -img.height  # 负值表示自上而下的像素顺序
+    header.biWidth = width
+    header.biHeight = -height  # 负值表示自上而下的像素顺序
     header.biPlanes = 1
-    header.biBitCount = 32
+    header.biBitCount = 24
     header.biCompression = 0  # BI_RGB
     header.biSizeImage = len(data)
+    return data, header, width, height
 
+
+def _blit(handle, data: bytes, info, sw: int, sh: int,
+          x: int, y: int, w: int, h: int) -> None:
+    """把一份 DIB 载荷拉伸贴到 DC 上（灰度/彩色共用）。"""
     gdi32.SetStretchBltMode(hdc_ptr(handle), HALFTONE)
     # 直接把 Python bytes 的缓冲区交给 GDI 读取，省掉一次大块内存拷贝
     bits = ctypes.cast(ctypes.c_char_p(data), ctypes.c_void_p)
     copied = gdi32.StretchDIBits(
         hdc_ptr(handle), x, y, w, h,
-        0, 0, img.width, img.height,
-        bits, ctypes.byref(header),
+        0, 0, sw, sh,
+        bits, ctypes.byref(info),
         DIB_RGB_COLORS, SRCCOPY,
     )
     if copied <= 0:

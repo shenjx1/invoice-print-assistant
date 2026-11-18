@@ -26,6 +26,8 @@ class PrintBatch:
     landscape: bool = False
     copies: int = 1
     render_dpi: int = 300
+    engine: str = "auto"      # auto / sumatrapdf / raster，见 app.printers
+    gray: bool = True         # 8 位灰度送印（黑白打印机省时省队列）
     page_count: int = field(default=0)  # 该发票总页数，用于回报进度
     printed: int = field(default=0)     # 实际出纸张数（含份数），打完后由工作线程填
 
@@ -70,6 +72,8 @@ class PrintWorker(QThread):
                     copies=batch.copies,
                     render_dpi=batch.render_dpi,
                     job_name=batch.name,
+                    engine=batch.engine,
+                    gray=batch.gray,
                 )
                 self.message.emit(
                     f"「{batch.name}」已输出 {count} 张纸 → {batch.printer}", "ok"

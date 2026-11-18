@@ -34,7 +34,7 @@ Chinese invoice (增值税发票 / 电子发票) printing, fapiao, PySide6 deskt
 
 ## 下载使用
 
-到 [Releases](https://github.com/shenjx1/invoice-print-assistant/releases) 页面下载 **`发票打印助手_安装程序.exe`**：
+到 [Releases](https://github.com/shenjx1/invoice-print-assistant/releases) 页面下载 **`invoice-print-assistant-setup.exe`**（单文件安装程序）：
 
 1. 双击安装程序，确认后自动装到 `%LOCALAPPDATA%\Programs\发票打印助手`
 2. 桌面和开始菜单会自动出现快捷方式，装完直接启动
@@ -52,7 +52,7 @@ Chinese invoice (增值税发票 / 电子发票) printing, fapiao, PySide6 deskt
 <details>
 <summary>老版本：zip 包安装方式（仍可用）</summary>
 
-下载 `invoice-print-assistant-v1.0.0.zip`（45 MB，解压后 105 MB），完整解压 →
+下载 `invoice-print-assistant-v1.1.0.zip`（45 MB，解压后 105 MB），完整解压 →
 双击 `安装到本机.bat` → 拖 PDF 到桌面图标。程序是**文件夹版**（exe 旁边有 `_internal`），
 不能只拷 exe。
 </details>
@@ -91,8 +91,8 @@ dist_installer\发票打印助手_安装程序.exe --dry-run --target %TEMP%\ipa
 打 tag 推上去也能自动出 Release：
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 自动构建脚本在 [`docs/ci/build.yml`](docs/ci/build.yml)：在 Windows runner 上装依赖、生成图标、打包、把 zip 挂到 Release。
